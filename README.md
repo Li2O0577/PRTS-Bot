@@ -180,3 +180,8 @@ QQ 消息
 ```text
 data/short_term_memory.json
 ```
+
+##未来的可能功能
+- 智慧记忆
+- 表情ocr与发送
+- 森空岛绑定
