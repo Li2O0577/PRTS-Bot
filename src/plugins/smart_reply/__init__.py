@@ -9,8 +9,11 @@ from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, MessageEvent, Pr
 from nonebot.params import EventMessage
 from nonebot.plugin import PluginMetadata
 
+from src.skills.arknights_calculator import calculate
+from src.skills.arknights_wiki import search_wiki
+
 from .config import SmartReplyConfig, config
-from .llm import decide_with_llm
+from .llm import decide_wiki_lookup, decide_with_llm, extract_calc_request
 from .memory import memory
 
 
@@ -149,12 +152,53 @@ async def _flush_after_idle(session_id: str, version: int) -> None:
 
     _pending_batches.pop(session_id, None)
     context = _format_pending_context(batch.messages)
+    history = memory.get(session_id)
+    wiki_context = None
+    calc_context = None
+
+    wiki_decision = await decide_wiki_lookup(
+        session_name=batch.session_name,
+        sender_name=batch.latest_sender_name,
+        message=context,
+        history=history,
+    )
+    if wiki_decision.should_lookup:
+        wiki_result = await search_wiki(wiki_decision.query)
+        if wiki_result is not None:
+            wiki_context = wiki_result.as_prompt_context()
+            logger.info(
+                f"smart_reply wiki lookup used: query={wiki_decision.query!r}, "
+                f"pages={len(wiki_result.pages)}"
+            )
+
+    calc_request = await extract_calc_request(
+        session_name=batch.session_name,
+        sender_name=batch.latest_sender_name,
+        message=context,
+        history=history,
+        wiki_context=wiki_context,
+    )
+    calc_result = calculate(calc_request)
+    if calc_result is not None:
+        calc_context = (
+            f"Calculator result: {calc_result.summary}\n"
+            f"Formula details: {calc_result.details}\n"
+            "Use this numeric result. Mention that it is a simplified estimate if assumptions are incomplete."
+        )
+        logger.info(f"smart_reply calculation used: {calc_result.summary}")
+    elif calc_request.enabled:
+        calc_context = (
+            "Calculator could not run because required parameters were missing. "
+            f"Missing/notes: {calc_request.note}"
+        )
 
     decision = await decide_with_llm(
         session_name=batch.session_name,
         sender_name=batch.latest_sender_name,
         message=context,
-        history=memory.get(session_id),
+        history=history,
+        wiki_context=wiki_context,
+        calc_context=calc_context,
     )
 
     if not decision.should_reply:
