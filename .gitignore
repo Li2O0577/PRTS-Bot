@@ -4,6 +4,9 @@ __pycache__/
 *.py[cod]
 .ruff_cache/
 data/*.json
+data/skland_qr/
 logs/
 .vscode/
 .idea/
+tmp/
+*.egg-info/
