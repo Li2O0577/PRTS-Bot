@@ -1,3 +1,17 @@
+Metadata-Version: 2.4
+Name: nonebot-napcat-smart-reply
+Version: 0.1.0
+Summary: NoneBot2 + NapCat QQ intelligent auto-reply bot with short-term memory.
+Requires-Python: <4.0,>=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: nonebot2[fastapi]>=2.3.0
+Requires-Dist: nonebot-adapter-onebot>=2.4.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: qrcode[pil]>=7.4.2
+Provides-Extra: dev
+Requires-Dist: ruff>=0.6.0; extra == "dev"
+
 # NoneBot NapCat QQ Smart Reply
 
 这是一个基于 NoneBot2 的 QQ 智能回复项目，用 OneBot V11 适配器对接 NapCat。
@@ -205,7 +219,7 @@ src/plugins/skland_account.py
 
 当前支持：
 
-- 使用森空岛 App 扫码绑定账号
+- 使用 24 位 `token` 或 32 位 `cred` 手动绑定森空岛
 - 刷新并保存已绑定的明日方舟角色列表
 - 查询当前默认角色的文本摘要
 - 解绑并清除本地保存的森空岛凭证
@@ -213,7 +227,7 @@ src/plugins/skland_account.py
 当前命令：
 
 ```text
-森空岛绑定
+森空岛绑定 <24位token或32位cred>
 森空岛解绑
 森空岛角色
 森空岛信息
@@ -223,12 +237,11 @@ src/plugins/skland_account.py
 说明：
 
 - 这些命令目前只允许在私聊中使用
-- 发送 `森空岛绑定` 后，bot 会生成临时二维码并轮询等待扫码
-- 每次新建二维码前会清理旧二维码，绑定完成或超时后也会删除临时图片
+- 第一版是轻量实现，先做手动绑定，不包含二维码扫码绑定
 - 返回的是文本摘要，不是图片卡片
 - 资料摘要目前包含博士名、UID、等级、主线进度、理智、干员数、时装数、家具数、助理、助战和当前默认角色
 
 ## 未来的可能功能
 - 智慧记忆
 - 表情ocr与发送
-- 森空岛卡片渲染
+- 森空岛二维码绑定
