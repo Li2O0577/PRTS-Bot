@@ -14,7 +14,7 @@ from src.skills.arknights_calculator import calculate
 from src.skills.arknights_wiki import search_wiki
 
 from .config import SmartReplyConfig, config
-from .llm import decide_with_llm, extract_calc_request
+from .llm import decide_intent, extract_calc_request, generate_reply
 from .memory import memory
 
 
@@ -48,8 +48,13 @@ matcher = on_message(priority=99, block=False)
 _pending_batches: dict[str, PendingBatch] = {}
 
 
-def _plain_text(event: MessageEvent) -> str:
-    return event.get_plaintext().strip()
+def _plain_text(event: MessageEvent, bot: Bot | None = None) -> str:
+    text = event.get_plaintext().strip()
+    if text:
+        return text
+    if bot is not None and _is_at_me(event, bot):
+        return "博士在叫你，但没有附加文字。请简短回应，询问博士需要什么。"
+    return ""
 
 
 def _session_id(event: MessageEvent) -> str:
@@ -144,6 +149,33 @@ def _add_to_pending_batch(
     return batch.version
 
 
+def _chat_mode(event: MessageEvent) -> str:
+    return "group" if isinstance(event, GroupMessageEvent) else "private"
+
+
+def _last_user_text(context: str) -> str:
+    lines = [line.strip() for line in context.splitlines() if line.strip()]
+    if not lines:
+        return context.strip()
+    last = lines[-1]
+    return last.split(":", 1)[1].strip() if ":" in last else last
+
+
+async def _lookup_wiki(query: str, log_label: str) -> str | None:
+    wiki_result = await search_wiki(query)
+    if wiki_result is None:
+        logger.debug(f"smart_reply wiki lookup failed or disabled: query={query[:80]!r}")
+        return None
+    if not wiki_result.pages:
+        logger.info(f"smart_reply wiki lookup no result: query={query[:80]!r}")
+        return wiki_result.as_prompt_context()
+    logger.info(
+        f"smart_reply wiki lookup for {log_label}: query={query[:80]!r}, "
+        f"pages={len(wiki_result.pages)}"
+    )
+    return wiki_result.as_prompt_context()
+
+
 async def _flush_after_idle(session_id: str, version: int) -> None:
     try:
         await asyncio.sleep(config.smart_reply_batch_wait_seconds)
@@ -157,55 +189,71 @@ async def _flush_after_idle(session_id: str, version: int) -> None:
     _pending_batches.pop(session_id, None)
     context = _format_pending_context(batch.messages)
     history = memory.get(session_id)
+    chat_mode = _chat_mode(batch.event)
     wiki_context = None
     calc_context = None
 
-    calc_request = await extract_calc_request(
+    intent = await decide_intent(
         session_name=batch.session_name,
         sender_name=batch.latest_sender_name,
         message=context,
         history=history,
-        wiki_context=None,
+        chat_mode=chat_mode,
     )
 
-    if calc_request.enabled:
-        wiki_query = context.strip().split("\n")[-1] if context.strip() else context.strip()
-        wiki_result = await search_wiki(wiki_query)
-        if wiki_result is not None and wiki_result.pages:
-            wiki_context = wiki_result.as_prompt_context()
-            logger.info(
-                f"smart_reply wiki lookup for calc: query={wiki_query[:80]!r}, "
-                f"pages={len(wiki_result.pages)}"
-            )
-            calc_request = await extract_calc_request(
-                session_name=batch.session_name,
-                sender_name=batch.latest_sender_name,
-                message=context,
-                history=history,
-                wiki_context=wiki_context,
+    if not intent.should_reply:
+        logger.debug(f"smart_reply skipped batch: {intent.reason}")
+        memory.save()
+        return
+
+    if intent.should_lookup_wiki:
+        wiki_query = intent.wiki_query or _last_user_text(context)
+        wiki_context = await _lookup_wiki(wiki_query, "intent")
+
+    if intent.should_calculate:
+        if wiki_context is None and intent.should_lookup_wiki:
+            wiki_context = await _lookup_wiki(
+                intent.wiki_query or _last_user_text(context),
+                "calc",
             )
 
-    calc_result = calculate(calc_request)
-    if calc_result is not None:
-        calc_context = (
-            f"Calculator result: {calc_result.summary}\n"
-            f"Formula details: {calc_result.details}\n"
-            "Use this numeric result. Mention that it is a simplified estimate if assumptions are incomplete."
+        calc_request = await extract_calc_request(
+            session_name=batch.session_name,
+            sender_name=batch.latest_sender_name,
+            message=context,
+            history=history,
+            wiki_context=wiki_context,
         )
-        logger.info(f"smart_reply calculation used: {calc_result.summary}")
-    elif calc_request.enabled:
-        calc_context = (
-            "Calculator could not run because required parameters were missing. "
-            f"Missing/notes: {calc_request.note}"
-        )
+        try:
+            calc_result = calculate(calc_request)
+        except Exception as exc:
+            logger.warning(f"smart_reply calculation failed: {exc!r}")
+            calc_result = None
+            calc_context = (
+                "Calculator failed because extracted parameters were invalid. "
+                f"Missing/notes: {calc_request.note or 'invalid interval or malformed numeric fields'}"
+            )
+        if calc_result is not None:
+            calc_context = (
+                f"Calculator result: {calc_result.summary}\n"
+                f"Formula details: {calc_result.details}\n"
+                "Use this numeric result. Mention that it is a simplified estimate if assumptions are incomplete."
+            )
+            logger.info(f"smart_reply calculation used: {calc_result.summary}")
+        elif calc_request.enabled:
+            calc_context = (
+                "Calculator could not run because required parameters were missing. "
+                f"Missing/notes: {calc_request.note}"
+            )
 
-    decision = await decide_with_llm(
+    decision = await generate_reply(
         session_name=batch.session_name,
         sender_name=batch.latest_sender_name,
         message=context,
         history=history,
         wiki_context=wiki_context,
         calc_context=calc_context,
+        chat_mode=chat_mode,
     )
 
     if not decision.should_reply:
@@ -234,7 +282,7 @@ async def handle_smart_reply(
     if not _should_listen(event, bot):
         return
 
-    text = _plain_text(event)
+    text = _plain_text(event, bot)
     if not text:
         return
 

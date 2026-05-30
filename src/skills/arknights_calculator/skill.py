@@ -44,7 +44,11 @@ def calculate(request: CalcRequest) -> CalcResult | None:
 
 
 def _physical_damage(request: CalcRequest) -> CalcResult | None:
-    if request.attack is None or request.attack_interval is None:
+    if (
+        request.attack is None
+        or request.attack_interval is None
+        or request.attack_interval <= 0
+    ):
         return None
 
     damage_per_hit = max(request.attack * request.multiplier - request.enemy_defense, 0)
@@ -55,7 +59,11 @@ def _physical_damage(request: CalcRequest) -> CalcResult | None:
 
 
 def _arts_damage(request: CalcRequest) -> CalcResult | None:
-    if request.attack is None or request.attack_interval is None:
+    if (
+        request.attack is None
+        or request.attack_interval is None
+        or request.attack_interval <= 0
+    ):
         return None
 
     res_factor = max(1 - request.enemy_res / 100, 0.05)
@@ -67,7 +75,11 @@ def _arts_damage(request: CalcRequest) -> CalcResult | None:
 
 
 def _true_damage(request: CalcRequest) -> CalcResult | None:
-    if request.attack is None or request.attack_interval is None:
+    if (
+        request.attack is None
+        or request.attack_interval is None
+        or request.attack_interval <= 0
+    ):
         return None
 
     damage_per_hit = request.attack * request.multiplier
@@ -80,7 +92,7 @@ def _true_damage(request: CalcRequest) -> CalcResult | None:
 def _healing(request: CalcRequest) -> CalcResult | None:
     heal_amount = request.heal_amount if request.heal_amount is not None else request.attack
     interval = request.heal_interval if request.heal_interval is not None else request.attack_interval
-    if heal_amount is None or interval is None:
+    if heal_amount is None or interval is None or interval <= 0:
         return None
 
     heal_per_action = heal_amount * request.multiplier * request.hit_count * request.target_count
