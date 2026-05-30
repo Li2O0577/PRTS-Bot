@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -13,7 +14,7 @@ from src.skills.arknights_calculator import calculate
 from src.skills.arknights_wiki import search_wiki
 
 from .config import SmartReplyConfig, config
-from .llm import decide_wiki_lookup, decide_with_llm, extract_calc_request
+from .llm import decide_with_llm, extract_calc_request
 from .memory import memory
 
 
@@ -96,8 +97,11 @@ def _format_pending_context(messages: list[PendingMessage]) -> str:
 
 async def _send_replies(bot: Bot, event: MessageEvent, replies: list[str]) -> None:
     for index, reply in enumerate(replies):
-        if index:
-            await asyncio.sleep(0.8)
+        if index == 0:
+            typing_delay = min(len(reply) * 0.15 + random.uniform(1.5, 4.0), 12.0)
+            await asyncio.sleep(typing_delay)
+        else:
+            await asyncio.sleep(1.2)
         await bot.send(event, reply)
 
 
@@ -156,28 +160,31 @@ async def _flush_after_idle(session_id: str, version: int) -> None:
     wiki_context = None
     calc_context = None
 
-    wiki_decision = await decide_wiki_lookup(
-        session_name=batch.session_name,
-        sender_name=batch.latest_sender_name,
-        message=context,
-        history=history,
-    )
-    if wiki_decision.should_lookup:
-        wiki_result = await search_wiki(wiki_decision.query)
-        if wiki_result is not None:
-            wiki_context = wiki_result.as_prompt_context()
-            logger.info(
-                f"smart_reply wiki lookup used: query={wiki_decision.query!r}, "
-                f"pages={len(wiki_result.pages)}"
-            )
-
     calc_request = await extract_calc_request(
         session_name=batch.session_name,
         sender_name=batch.latest_sender_name,
         message=context,
         history=history,
-        wiki_context=wiki_context,
+        wiki_context=None,
     )
+
+    if calc_request.enabled:
+        wiki_query = context.strip().split("\n")[-1] if context.strip() else context.strip()
+        wiki_result = await search_wiki(wiki_query)
+        if wiki_result is not None and wiki_result.pages:
+            wiki_context = wiki_result.as_prompt_context()
+            logger.info(
+                f"smart_reply wiki lookup for calc: query={wiki_query[:80]!r}, "
+                f"pages={len(wiki_result.pages)}"
+            )
+            calc_request = await extract_calc_request(
+                session_name=batch.session_name,
+                sender_name=batch.latest_sender_name,
+                message=context,
+                history=history,
+                wiki_context=wiki_context,
+            )
+
     calc_result = calculate(calc_request)
     if calc_result is not None:
         calc_context = (
